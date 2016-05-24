@@ -6,7 +6,7 @@ package play.api.cache
 import javax.inject._
 import play.api._
 import play.api.inject.{ BindingKey, Injector, ApplicationLifecycle, Module }
-import scala.concurrent.Future
+import scala.concurrent.{ ExecutionContext, Future }
 import scala.reflect.ClassTag
 import scala.concurrent.duration._
 import play.cache.{ CacheApi => JavaCacheApi, DefaultCacheApi => DefaultJavaCacheApi, NamedCacheImpl }
@@ -37,10 +37,19 @@ trait CacheApi {
    * Retrieve a value from the cache, or set it from a default function.
    *
    * @param key Item key.
-   * @param expiration expiration period in seconds.
+   * @param expiration expiration period as a [[scala.concurrent.duration.Duration]].
    * @param orElse The default function to invoke if the value was not found in cache.
    */
   def getOrElse[A: ClassTag](key: String, expiration: Duration = Duration.Inf)(orElse: => A): A
+
+  /**
+   * Retrieve a value from the cache, or set it from a default function in future.
+   *
+   * @param key Item key.
+   * @param expiration expiration period as a [[scala.concurrent.duration.Duration]].
+   * @param orElse The default future function to invoke if the value was not found in cache.
+   */
+  def getOrElseF[A: ClassTag](key: String, expiration: Duration = Duration.Inf)(orElse: => Future[A])(implicit executor: ExecutionContext): Future[A]
 
   /**
    * Retrieve a value from the cache for the given type
@@ -119,6 +128,30 @@ object Cache {
   @deprecated("Inject CacheApi into your component", "2.5.0")
   def getOrElse[A](key: String, expiration: Int)(orElse: => A)(implicit app: Application, ct: ClassTag[A]): A = {
     getOrElse(key, intToDuration(expiration))(orElse)
+  }
+
+  /**
+   * Retrieve a value from the cache, or set it from a default function in future.
+   *
+   * @param key Item key.
+   * @param expiration expiration period as a [[scala.concurrent.duration.Duration]].
+   * @param orElse The default future function to invoke if the value was not found in cache.
+   */
+  @deprecated("Inject CacheApi into your component", "2.5.0")
+  def getOrElseF[A](key: String, expiration: Duration = Duration.Inf)(orElse: => Future[A])(implicit executor: ExecutionContext, app: Application, ct: ClassTag[A]): Future[A] = {
+    cacheApi.getOrElseF(key, expiration)(orElse)
+  }
+
+  /**
+   * Retrieve a value from the cache, or set it from a default function in future.
+   *
+   * @param key Item key.
+   * @param expiration expiration period in seconds.
+   * @param orElse The default future function to invoke if the value was not found in cache.
+   */
+  @deprecated("Inject CacheApi into your component", "2.5.0")
+  def getOrElseF[A](key: String, expiration: Int)(orElse: => Future[A])(implicit executor: ExecutionContext, app: Application, ct: ClassTag[A]): Future[A] = {
+    cacheApi.getOrElseF(key, intToDuration(expiration))(orElse)
   }
 
   /**
@@ -291,6 +324,17 @@ class EhCacheApi @Inject() (cache: Ehcache) extends CacheApi {
       val value = orElse
       set(key, value, expiration)
       value
+    }
+  }
+
+  def getOrElseF[A: ClassTag](key: String, expiration: Duration)(orElse: => Future[A])(implicit executor: ExecutionContext) = {
+    get[A](key) match {
+      case Some(value) => Future.successful(value)
+      case None =>
+        orElse map { value =>
+          set(key, value, expiration)
+          value
+        }
     }
   }
 
